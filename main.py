@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Railway Variables: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, MEXC_SYMBOLS=BTCUSDT,ETHUSDT
+# Змінні Railway: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, MEXC_SYMBOLS=BTCUSDT,ETHUSDT
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_IDS = [x.strip() for x in os.getenv("TELEGRAM_CHAT_ID", "").split(",") if x.strip()]
 
@@ -21,7 +21,7 @@ TIMEFRAME_LABEL = "10m"
 DEFAULT_SYMBOLS = "BTCUSDT,ETHUSDT"
 
 def normalize_symbol(value):
-    """Accept BTCUSDT, BTC_USDT or BTC__USDT and normalize to BTC_USDT."""
+    """Приймає BTCUSDT, BTC_USDT або BTC__USDT і приводить до BTC_USDT."""
     s = value.strip().upper().replace("_", "")
     if not s:
         return ""
@@ -69,14 +69,14 @@ def load_state(path):
         with open(path, "r", encoding="utf-8") as f:
             state = json.load(f)
         if not isinstance(state, dict):
-            raise ValueError("State must be a JSON object")
+            raise ValueError("Стан має бути JSON-об'єктом")
         state.setdefault("pending", [])
         state.setdefault("last_processed", None)
         return state
     except FileNotFoundError:
         return {"last_processed": None, "pending": []}
     except Exception as exc:
-        log.warning("Cannot read state %s (%s); starting with clean state", path, exc)
+        log.warning("Не вдалося прочитати файл стану %s (%s). Починаємо з чистого стану", path, exc)
         return {"last_processed": None, "pending": []}
 
 
@@ -89,7 +89,7 @@ def save_state(state, path):
 
 def send_telegram(text):
     if not TOKEN or not CHAT_IDS:
-        log.error("TELEGRAM NOT CONFIGURED: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Railway Variables")
+        log.error("TELEGRAM НЕ НАЛАШТОВАНО: додайте TELEGRAM_BOT_TOKEN і TELEGRAM_CHAT_ID у змінні Railway")
         return False
     success_count = 0
     for chat_id in CHAT_IDS:
@@ -102,17 +102,17 @@ def send_telegram(text):
             payload = response.json()
             if response.ok and payload.get("ok"):
                 success_count += 1
-                log.info("TELEGRAM SENT OK | chat=%s", chat_id)
+                log.info("ПОВІДОМЛЕННЯ TELEGRAM НАДІСЛАНО | чат=%s", chat_id)
             else:
-                log.error("TELEGRAM ERROR | chat=%s | status=%s | body=%s", chat_id, response.status_code, response.text[:300])
+                log.error("ПОМИЛКА TELEGRAM | чат=%s | статус=%s | відповідь=%s", chat_id, response.status_code, response.text[:300])
         except Exception:
-            log.exception("TELEGRAM EXCEPTION | chat=%s", chat_id)
+            log.exception("ПОМИЛКА ПІД ЧАС НАДСИЛАННЯ TELEGRAM | чат=%s", chat_id)
     return success_count == len(CHAT_IDS)
 
 
 def parse_mexc_timestamp(value):
     ts = int(float(value))
-    # MEXC contract K-line timestamps are usually seconds; tolerate milliseconds.
+    # Часові мітки свічок MEXC зазвичай у секундах; підтримуємо також мілісекунди.
     if ts > 10_000_000_000:
         ts //= 1000
     return ts
@@ -127,10 +127,10 @@ def fetch_1m_candles(symbol):
     response.raise_for_status()
     payload = response.json()
     if payload.get("success") is False:
-        raise RuntimeError(f"MEXC API error {payload.get('code')}: {payload.get('message')}")
+        raise RuntimeError(f"Помилка API MEXC {payload.get('code')}: {payload.get('message')}")
     data = payload.get("data")
     if not data:
-        raise RuntimeError(f"MEXC returned empty data: {payload}")
+        raise RuntimeError(f"MEXC повернула порожні дані: {payload}")
 
     candles = []
     if isinstance(data, dict) and isinstance(data.get("time"), list):
@@ -138,7 +138,7 @@ def fetch_1m_candles(symbol):
         opens = data.get("open", [])
         closes = data.get("close", [])
         if not (len(times) == len(opens) == len(closes)):
-            raise RuntimeError("MEXC candle arrays have different lengths")
+            raise RuntimeError("Масиви свічок MEXC мають різну довжину")
         for i, ts in enumerate(times):
             candles.append({"ts": parse_mexc_timestamp(ts), "open": float(opens[i]), "close": float(closes[i])})
     elif isinstance(data, list):
@@ -151,9 +151,9 @@ def fetch_1m_candles(symbol):
                 ts, op, cl = row[0], row[1], row[2]
             candles.append({"ts": parse_mexc_timestamp(ts), "open": float(op), "close": float(cl)})
     else:
-        raise RuntimeError(f"Unknown MEXC response data format: {type(data).__name__}")
+        raise RuntimeError(f"Невідомий формат відповіді MEXC: {type(data).__name__}")
 
-    # Deduplicate and sort, as API responses can overlap between polls.
+    # Видаляємо дублікати та сортуємо свічки за часом.
     by_ts = {c["ts"]: c for c in candles}
     return [by_ts[k] for k in sorted(by_ts)]
 
@@ -168,7 +168,7 @@ def aggregate_10m(minute_candles):
     result = []
     for bucket_ts, rows in sorted(buckets.items()):
         rows.sort(key=lambda x: x["ts"])
-        # Only accept complete, closed 10-minute candles; avoids partial/missing data.
+        # Беремо лише повні закриті 10-хвилинні свічки без пропущених хвилин.
         if bucket_ts + TIMEFRAME_SECONDS <= now and len(rows) == 10:
             expected = [bucket_ts + i * 60 for i in range(10)]
             if [x["ts"] for x in rows] == expected:
@@ -187,7 +187,7 @@ def current_10m(minute_candles):
 
 
 class SignalEngine:
-    """Pattern: #1-#3 same color, #4-#6 opposite; results are #7-#12."""
+    """Патерн: свічки №1–№3 одного кольору, №4–№6 — протилежного; результат №7–№12."""
     def __init__(self, symbol):
         self.symbol = symbol
         self.state_path = os.getenv(f"STATE_FILE_{symbol}", f"state_{symbol}.json")
@@ -200,18 +200,18 @@ class SignalEngine:
     def seed(self, closed):
         self.candles = OrderedDict((c["ts"], c) for c in closed[-250:])
         self.candles = OrderedDict(sorted(self.candles.items()))
-        # Avoid generating old signals when the service first starts.
+        # Після запуску не генеруємо сигнали заднім числом.
         self.state["last_processed"] = next(reversed(self.candles), None)
         save_state(self.state, self.state_path)
         self.initialized = True
         if self.candles:
             latest = next(reversed(self.candles.values()))
-            log.info("INITIALIZED | %s | candles=%d | latest=%s %s", self.symbol, len(self.candles), utc(latest["ts"]), candle_color(latest))
+            log.info("ІНІЦІАЛІЗАЦІЯ | %s | свічок=%d | остання=%s %s", self.symbol, len(self.candles), utc(latest["ts"]), candle_color(latest))
 
     def _pattern_for_sixth(self, sixth_ts, live_sixth=None):
-        """Return a valid setup for candles #1-#6: #1-#3 same, #4-#6 opposite."""
+        """Перевіряє свічки №1–№6: №1–№3 одного кольору, №4–№6 — протилежного."""
         first_ts = sixth_ts - 5 * TIMEFRAME_SECONDS
-        prior_ts = [first_ts + i * TIMEFRAME_SECONDS for i in range(5)]  # candles #1-#5
+        prior_ts = [first_ts + i * TIMEFRAME_SECONDS for i in range(5)]  # свічки №1–№5
         if any(ts not in self.candles for ts in prior_ts):
             return None
 
@@ -230,7 +230,7 @@ class SignalEngine:
         if fourth_color != opposite_color or fifth_color != opposite_color or sixth_color != opposite_color:
             return None
 
-        # START (#1) must not be part of a longer run of the same color.
+        # Перша свічка патерна не повинна бути продовженням довшої серії того самого кольору.
         previous_ts = first_ts - TIMEFRAME_SECONDS
         if previous_ts in self.candles and candle_color(self.candles[previous_ts]) == start_color:
             return None
@@ -249,7 +249,7 @@ class SignalEngine:
     def maybe_pre_alert(self, live_candle):
         if not self.initialized or not live_candle:
             return
-        # PRE-ALERT is sent during the final minute of forming candle #6.
+        # PRE надсилається протягом останньої хвилини формування свічки №6.
         elapsed = time.time() - live_candle["ts"]
         if elapsed < TIMEFRAME_SECONDS - 60 or elapsed >= TIMEFRAME_SECONDS:
             return
@@ -260,14 +260,15 @@ class SignalEngine:
         if not pattern:
             return
 
+        pat = "🔴🔴🔴🟢🟢🟢" if pattern["direction"] == "SHORT" else "🟢🟢🟢🔴🔴🔴"
         text = (
-            f"⚠️ PRE-ALERT — {symbol_label(self.symbol)} Futures\\n"
-            f"Timeframe: {TIMEFRAME_LABEL}\\n"
-            f"Pattern: #1–#3 {pattern['start_color']}, #4–#6 {pattern['opposite_color']}\\n"
-            f"Possible direction: {pattern['direction']}\\n\\n"
-            "Final signal is sent only after candle #6 closes and confirms."
+            f"⚠️ ПОПЕРЕДЖЕННЯ — {symbol_label(self.symbol)} Futures\n"
+            f"Таймфрейм: {TIMEFRAME_LABEL}\n"
+            f"Патерн: {pat}\n"
+            f"Можливий напрямок: {pattern['direction']}\n\n"
+            "Остаточний сигнал надійде лише після закриття свічки №6 і підтвердження патерна."
         )
-        log.info("PRE-ALERT | %s | direction=%s | start=%s", self.symbol, pattern["direction"], utc(pattern["start_ts"]))
+        log.info("ПОПЕРЕДЖЕННЯ | %s | напрямок=%s | початок=%s", self.symbol, pattern["direction"], utc(pattern["start_ts"]))
         if send_telegram(text):
             self.pre_sent.add(target_ts)
 
@@ -296,7 +297,7 @@ class SignalEngine:
         current = self.candles[ts]
         keep = []
 
-        # Check results on candles #7 through #12 after the signal candle #6.
+        # Перевіряємо результат на свічках №7–№12 після сигнальної свічки №6.
         for setup in self.pending:
             rel = int((ts - setup["signal_ts"]) // TIMEFRAME_SECONDS)
             if rel < 1:
@@ -308,10 +309,10 @@ class SignalEngine:
             result_color = candle_color(current)
             if result_color == setup["start_color"]:
                 send_telegram(
-                    f"WIN\\n{symbol_label(self.symbol)} Futures\\nDirection: {setup['direction']}\\n"
-                    f"Result candle: #{rel + 6}/#12"
+                    f"✅ ПЕРЕМОГА\n{symbol_label(self.symbol)} Futures\nНапрямок: {setup['direction']}\n"
+                    f"Свічка, що підтвердила результат: №{rel + 6}/№12"
                 )
-                log.info("RESULT WIN | %s | %s | candle #%d", self.symbol, setup["direction"], rel + 6)
+                log.info("РЕЗУЛЬТАТ: ПЕРЕМОГА | %s | %s | свічка №%d", self.symbol, setup["direction"], rel + 6)
                 continue
 
             setup.setdefault("result_colors", []).append(result_color)
@@ -319,19 +320,19 @@ class SignalEngine:
                 opposite = "RED" if setup["start_color"] == "GREEN" else "GREEN"
                 if len(setup["result_colors"]) == 6 and all(c == opposite for c in setup["result_colors"]):
                     send_telegram(
-                        f"LOSS\\n{symbol_label(self.symbol)} Futures\\nDirection: {setup['direction']}\\n"
-                        "All candles #7–#12 were opposite to the start color."
+                        f"❌ ПОРАЗКА\n{symbol_label(self.symbol)} Futures\nНапрямок: {setup['direction']}\n"
+                        "Усі свічки №7–№12 були протилежного кольору до початкової трійки."
                     )
-                    log.info("RESULT LOSS | %s | %s", self.symbol, setup["direction"])
+                    log.info("РЕЗУЛЬТАТ: ПОРАЗКА | %s | %s", self.symbol, setup["direction"])
                 else:
-                    log.info("NO WIN/LOSS | %s | %s | doji in result window", self.symbol, setup["direction"])
+                    log.info("НЕМАЄ РЕЗУЛЬТАТУ | %s | %s | у вікні є свічка доджі", self.symbol, setup["direction"])
                 continue
 
-            # Dojis are neither the start color nor the opposite color.
+            # Доджі не належать ні до початкового, ні до протилежного кольору.
             keep.append(setup)
         self.pending = keep
 
-        # Current closed candle can be #6: check the preceding #1-#5.
+        # Поточна закрита свічка може бути №6: перевіряємо попередні №1–№5.
         if idx < 5:
             return
         pattern = self._pattern_for_sixth(ts)
@@ -341,24 +342,24 @@ class SignalEngine:
             return
 
         signal = (
-            f"SIGNAL {pattern['direction']}\\n\\n{symbol_label(self.symbol)} Futures\\n"
-            f"Timeframe: {TIMEFRAME_LABEL}\\n"
-            f"Start: {kyiv(pattern['start_ts'])} Kyiv time\\n\\n"
-            "Signal only — no automatic trading."
+            f"🔔 СИГНАЛ {pattern['direction']}\n\n{symbol_label(self.symbol)} Futures\n"
+            f"Таймфрейм: {TIMEFRAME_LABEL}\n"
+            f"Початок патерна: {kyiv(pattern['start_ts'])} за київським часом\n\n"
+            "Лише інформаційний сигнал — автоматичні угоди не відкриваються."
         )
         sent = send_telegram(signal)
-        log.info("SIGNAL %s | %s | start=%s | sent=%s", pattern["direction"], self.symbol, utc(pattern["start_ts"]), sent)
+        log.info("СИГНАЛ %s | %s | початок=%s | надіслано=%s", pattern["direction"], self.symbol, utc(pattern["start_ts"]), sent)
         self.pending.append(pattern)
 
 
 def main():
     if not SYMBOLS:
-        raise RuntimeError("MEXC_SYMBOLS is empty; set it to BTCUSDT,ETHUSDT")
-    log.info("Starting MEXC Futures signal bot | timeframe=%s | poll=%ss", TIMEFRAME_LABEL, POLL_SECONDS)
-    log.info("Symbols: %s", ", ".join(SYMBOLS))
-    log.info("Telegram configured: %s | chat count: %d", bool(TOKEN), len(CHAT_IDS))
+        raise RuntimeError("Список MEXC_SYMBOLS порожній; задайте BTCUSDT,ETHUSDT")
+    log.info("Запуск бота сигналів MEXC Futures | таймфрейм=%s | інтервал перевірки=%s с", TIMEFRAME_LABEL, POLL_SECONDS)
+    log.info("Інструменти: %s", ", ".join(SYMBOLS))
+    log.info("Telegram налаштовано: %s | кількість чатів: %d", bool(TOKEN), len(CHAT_IDS))
     if TOKEN and CHAT_IDS:
-        send_telegram(f"BOT ONLINE\nMEXC Futures\nSymbols: {', '.join(symbol_label(s) for s in SYMBOLS)}\nTimeframe: {TIMEFRAME_LABEL}\nAlerts only; no automatic trading.")
+        send_telegram(f"🤖 БОТ ЗАПУЩЕНО\nMEXC Futures\nІнструменти: {', '.join(symbol_label(s) for s in SYMBOLS)}\nТаймфрейм: {TIMEFRAME_LABEL}\nЛише сповіщення — автоматичні угоди не відкриваються.")
 
     engines = {symbol: SignalEngine(symbol) for symbol in SYMBOLS}
     last_heartbeat = {}
@@ -371,29 +372,29 @@ def main():
                     engine.maybe_pre_alert(live)
                 closed = aggregate_10m(minutes)
                 if not closed:
-                    log.warning("%s | MEXC returned data but no complete closed %s candles yet", symbol, TIMEFRAME_LABEL)
+                    log.warning("%s | MEXC повернула дані, але поки немає повних закритих свічок %s", symbol, TIMEFRAME_LABEL)
                     continue
                 added = engine.ingest(closed)
                 latest = closed[-1]
                 if added:
-                    log.info("NEW DATA | %s | 1m=%d | closed_10m=%d | added=%d | latest=%s %s | open=%s close=%s | pending=%d",
+                    log.info("НОВІ ДАНІ | %s | хвилинних свічок=%d | закритих 10-хвилинних=%d | додано=%d | остання=%s %s | відкриття=%s закриття=%s | очікують результату=%d",
                              symbol, len(minutes), len(closed), added, utc(latest["ts"]), candle_color(latest), latest["open"], latest["close"], len(engine.pending))
                 elif time.time() - last_heartbeat.get(symbol, 0) >= 60:
                     age = max(0, int(time.time() - (latest["ts"] + TIMEFRAME_SECONDS)))
-                    log.info("HEARTBEAT OK | %s | latest=%s %s | age=%ss | pending=%d", symbol, utc(latest["ts"]), candle_color(latest), age, len(engine.pending))
+                    log.info("ЗВ'ЯЗОК ПРАЦЮЄ | %s | остання свічка=%s %s | вік=%s с | очікують результату=%d", symbol, utc(latest["ts"]), candle_color(latest), age, len(engine.pending))
                     last_heartbeat[symbol] = time.time()
             except Exception as exc:
-                log.exception("LOOP ERROR | %s | %s", symbol, exc)
+                log.exception("ПОМИЛКА ЦИКЛУ | %s | %s", symbol, exc)
         time.sleep(POLL_SECONDS)
 
 
 if __name__ == "__main__":
     if TEST_MODE:
-        # Simple startup/config validation; no real Telegram messages are sent.
-        print("TEST MODE PASS")
-        print("Symbols:", ", ".join(SYMBOLS))
-        print("Timeframe:", TIMEFRAME_LABEL)
+        # Режим перевірки конфігурації; реальні повідомлення Telegram не надсилаються.
+        print("ТЕСТОВИЙ РЕЖИМ: УСПІШНО")
+        print("Інструменти:", ", ".join(SYMBOLS))
+        print("Таймфрейм:", TIMEFRAME_LABEL)
         print("API:", API_URL)
-        print("Rule: #1-#3 same color; #4-#6 opposite; PRE final minute #6; SIGNAL after #6 close; results #7-#12")
+        print("Правило: №1–№3 одного кольору; №4–№6 протилежного; попередження в останню хвилину №6; сигнал після закриття №6; результат №7–№12")
     else:
         main()
